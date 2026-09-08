@@ -78,9 +78,15 @@ jobs:
           ref: ${{ inputs.code_ref }}
       - uses: actions/download-artifact@v8
         with:
+          pattern: shared-library-*
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: source-archive
           path: release
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
-        run: gh release create "$TAG" release/*/* --generate-notes --title "$TAG"
+        run: gh release create "$TAG" release/*.tar.gz --generate-notes --title "$TAG"
