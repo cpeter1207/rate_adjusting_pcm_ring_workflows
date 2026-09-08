@@ -1,0 +1,80 @@
+name: Verified shared-library release
+on:
+  workflow_call:
+    inputs:
+      code_ref:
+        description: Immutable production revision to release.
+        type: string
+        required: true
+      tag:
+        description: Release tag.
+        type: string
+        required: true
+permissions:
+  contents: write
+jobs:
+  quality:
+    uses: cpeter1207/rate_adjusting_pcm_ring_workflows/.github/workflows/quality.yml@main
+    with:
+      code_ref: ${{ inputs.code_ref }}
+  binaries:
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: ['12', '13']
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: ghcr.io/cpeter1207/rpt-advanced-quality-debian${{ matrix.debian }}:latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: cpeter1207/rate_adjusting_pcm_ring
+          ref: ${{ inputs.code_ref }}
+      - run: make clean all
+      - name: Assemble shared-library archive
+        run: |
+          mkdir release
+          cp build/librate_adjusting_pcm_ring.so.0.1.0 release/
+          cp build/librate_adjusting_pcm_ring.so.0 release/
+          cp build/librate_adjusting_pcm_ring.so release/
+          cp build/librate_adjusting_pcm_ring.a release/
+          cp include/rate_adjusting_pcm_ring.h release/
+          tar -C release -czf rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ matrix.debian }}-${{ matrix.arch }}.tar.gz .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shared-library-debian${{ matrix.debian }}-${{ matrix.arch }}
+          path: rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ matrix.debian }}-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+  source:
+    needs: quality
+    runs-on: ubuntu-24.04
+    container: ghcr.io/cpeter1207/rpt-advanced-quality-debian13:latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: cpeter1207/rate_adjusting_pcm_ring
+          ref: ${{ inputs.code_ref }}
+      - run: make VERSION=${{ inputs.tag }} distcheck
+      - uses: actions/upload-artifact@v7
+        with:
+          name: source-archive
+          path: build/rate_adjusting_pcm_ring-${{ inputs.tag }}.tar.gz
+          if-no-files-found: error
+  publish:
+    needs: [binaries, source]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release create "$TAG" release/*/* --generate-notes --title "$TAG"
