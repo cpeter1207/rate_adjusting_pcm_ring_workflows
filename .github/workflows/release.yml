@@ -41,8 +41,8 @@ jobs:
         run: |
           mkdir release
           cp build/librate_adjusting_pcm_ring.so.0.1.0 release/
-          cp build/librate_adjusting_pcm_ring.so.0 release/
-          cp build/librate_adjusting_pcm_ring.so release/
+          ln -s librate_adjusting_pcm_ring.so.0.1.0 release/librate_adjusting_pcm_ring.so.0
+          ln -s librate_adjusting_pcm_ring.so.0 release/librate_adjusting_pcm_ring.so
           cp build/librate_adjusting_pcm_ring.a release/
           cp include/rate_adjusting_pcm_ring.h release/
           tar -C release -czf rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ matrix.debian }}-${{ matrix.arch }}.tar.gz .
