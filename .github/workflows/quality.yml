@@ -69,7 +69,8 @@ jobs:
           PLATFORMS: ${{ needs.platforms.result }}
         run: test "$INDEPENDENT" = success && test "$PLATFORMS" = success
   documentation:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: required
     runs-on: ubuntu-24.04
     permissions:
