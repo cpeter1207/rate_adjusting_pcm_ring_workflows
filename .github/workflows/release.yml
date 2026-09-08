@@ -12,6 +12,8 @@ on:
         required: true
 permissions:
   contents: write
+  pages: write
+  id-token: write
 jobs:
   quality:
     uses: cpeter1207/rate_adjusting_pcm_ring_workflows/.github/workflows/quality.yml@main
