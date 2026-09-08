@@ -72,6 +72,10 @@ jobs:
     needs: [binaries, source]
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: cpeter1207/rate_adjusting_pcm_ring
+          ref: ${{ inputs.code_ref }}
       - uses: actions/download-artifact@v8
         with:
           path: release
