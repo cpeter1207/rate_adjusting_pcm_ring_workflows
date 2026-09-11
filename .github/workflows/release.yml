@@ -48,7 +48,6 @@ jobs:
           cp "build/librate_adjusting_pcm_ring.so.$version" release/
           ln -s "librate_adjusting_pcm_ring.so.$version" "release/librate_adjusting_pcm_ring.so.$soversion"
           ln -s "librate_adjusting_pcm_ring.so.$soversion" release/librate_adjusting_pcm_ring.so
-          cp build/librate_adjusting_pcm_ring.a release/
           cp include/rate_adjusting_pcm_ring.h release/
           cp build/rate_adjusting_pcm_ring.pc release/
           tar -C release -czf rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ matrix.debian }}-${{ matrix.arch }}.tar.gz .
