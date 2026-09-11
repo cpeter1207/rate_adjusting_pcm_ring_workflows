@@ -10,21 +10,45 @@ on:
         description: Release tag.
         type: string
         required: true
+      target_debian:
+        description: Target Debian version; Debian 12 requires explicit manual acknowledgement.
+        type: string
+        required: false
+        default: '13'
+      manual_debian12:
+        description: Explicitly acknowledge a manually requested Debian 12 package build.
+        type: boolean
+        required: false
+        default: false
 permissions:
   contents: write
   pages: write
   id-token: write
 jobs:
+  target:
+    name: Validate package target
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Accept Debian 13 or an explicitly acknowledged Debian 12 build
+        env:
+          TARGET_DEBIAN: ${{ inputs.target_debian }}
+          MANUAL_DEBIAN12: ${{ inputs.manual_debian12 }}
+        run: |
+          case "$TARGET_DEBIAN" in
+            13) ;;
+            12) test "$MANUAL_DEBIAN12" = true ;;
+            *) echo "Unsupported Debian target: $TARGET_DEBIAN" >&2; exit 1 ;;
+          esac
   quality:
+    needs: target
     uses: cpeter1207/rate_adjusting_pcm_ring_workflows/.github/workflows/quality.yml@main
     with:
       code_ref: ${{ inputs.code_ref }}
   binaries:
-    needs: quality
+    needs: [quality, target]
     strategy:
       fail-fast: false
       matrix:
-        debian: ['12', '13']
         arch: [amd64, arm64]
         include:
           - arch: amd64
@@ -32,7 +56,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    container: ghcr.io/cpeter1207/rpt-advanced-quality-debian${{ matrix.debian }}:latest
+    container: ghcr.io/cpeter1207/rpt-advanced-quality-debian${{ inputs.target_debian }}:latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -50,28 +74,28 @@ jobs:
           ln -s "librate_adjusting_pcm_ring.so.$soversion" release/librate_adjusting_pcm_ring.so
           cp include/rate_adjusting_pcm_ring.h release/
           cp build/rate_adjusting_pcm_ring.pc release/
-          tar -C release -czf rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ matrix.debian }}-${{ matrix.arch }}.tar.gz .
+          tar -C release -czf rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ inputs.target_debian }}-${{ matrix.arch }}.tar.gz .
       - name: Build and stage Debian packages
         run: |
           make debian-package-check
           debian_version=$(dpkg-parsechangelog -S Version)
           debian_arch=$(dpkg --print-architecture)
           cp "../librate-adjusting-pcm-ring1_${debian_version}_${debian_arch}.deb" \
-            "release/librate-adjusting-pcm-ring1_${debian_version}_debian${{ matrix.debian }}_${debian_arch}.deb"
+            "release/librate-adjusting-pcm-ring1_${debian_version}_debian${{ inputs.target_debian }}_${debian_arch}.deb"
           cp "../librate-adjusting-pcm-ring-dev_${debian_version}_${debian_arch}.deb" \
-            "release/librate-adjusting-pcm-ring-dev_${debian_version}_debian${{ matrix.debian }}_${debian_arch}.deb"
+            "release/librate-adjusting-pcm-ring-dev_${debian_version}_debian${{ inputs.target_debian }}_${debian_arch}.deb"
       - uses: actions/upload-artifact@v7
         with:
-          name: shared-library-debian${{ matrix.debian }}-${{ matrix.arch }}
-          path: rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ matrix.debian }}-${{ matrix.arch }}.tar.gz
+          name: shared-library-debian${{ inputs.target_debian }}-${{ matrix.arch }}
+          path: rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ inputs.target_debian }}-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         with:
-          name: debian-packages-debian${{ matrix.debian }}-${{ matrix.arch }}
+          name: debian-packages-debian${{ inputs.target_debian }}-${{ matrix.arch }}
           path: release/*.deb
           if-no-files-found: error
   source:
-    needs: quality
+    needs: [quality, target]
     runs-on: ubuntu-24.04
     container: ghcr.io/cpeter1207/rpt-advanced-quality-debian13:latest
     steps:
