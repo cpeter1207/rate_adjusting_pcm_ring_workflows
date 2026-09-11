@@ -51,10 +51,24 @@ jobs:
           cp include/rate_adjusting_pcm_ring.h release/
           cp build/rate_adjusting_pcm_ring.pc release/
           tar -C release -czf rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ matrix.debian }}-${{ matrix.arch }}.tar.gz .
+      - name: Build and stage Debian packages
+        run: |
+          make debian-package-check
+          debian_version=$(dpkg-parsechangelog -S Version)
+          debian_arch=$(dpkg --print-architecture)
+          cp "../librate-adjusting-pcm-ring1_${debian_version}_${debian_arch}.deb" \
+            "release/librate-adjusting-pcm-ring1_${debian_version}_debian${{ matrix.debian }}_${debian_arch}.deb"
+          cp "../librate-adjusting-pcm-ring-dev_${debian_version}_${debian_arch}.deb" \
+            "release/librate-adjusting-pcm-ring-dev_${debian_version}_debian${{ matrix.debian }}_${debian_arch}.deb"
       - uses: actions/upload-artifact@v7
         with:
           name: shared-library-debian${{ matrix.debian }}-${{ matrix.arch }}
           path: rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ matrix.debian }}-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: debian-packages-debian${{ matrix.debian }}-${{ matrix.arch }}
+          path: release/*.deb
           if-no-files-found: error
   source:
     needs: quality
@@ -88,10 +102,15 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@v8
         with:
+          pattern: debian-packages-*
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
           name: source-archive
           path: release
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
-        run: gh release create "$TAG" release/*.tar.gz --generate-notes --title "$TAG"
+        run: gh release create "$TAG" release/*.tar.gz release/*.deb --generate-notes --title "$TAG"
