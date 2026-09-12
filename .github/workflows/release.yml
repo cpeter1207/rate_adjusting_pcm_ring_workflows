@@ -126,7 +126,7 @@ jobs:
         run: |
           RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE" \
             env SAMPLERATE_ADAPTER_DEB_DIR=/workspace/build/samplerate-adapter-debs \
-              RELEASE_VERSION="${TAG#v}" bash -eu -o pipefail -c '
+              RELEASE_TAG="$TAG" RELEASE_VERSION="${TAG#v}" bash -eu -o pipefail -c '
               make PACKAGE_VERSION="$RELEASE_VERSION" all \
                 build/rate_adjusting_pcm_ring.pc build/rate_adjusting_pcm_ring2.pc \
                 debian-package-check
@@ -152,7 +152,7 @@ jobs:
               cp include/rate_adjusting_pcm_ring2/rate_adjusting_pcm_ring2.h release/abi2/
               cp build/rate_adjusting_pcm_ring2.pc release/abi2/
 
-              tar -C release -czf "rate-adjusting-pcm-ring-$TAG-debian13-$(dpkg --print-architecture).tar.gz" \
+              tar -C release -czf "rate-adjusting-pcm-ring-$RELEASE_TAG-debian13-$(dpkg --print-architecture).tar.gz" \
                 abi1 abi2
 
               debian_version="$(dpkg-parsechangelog -S Version)"
