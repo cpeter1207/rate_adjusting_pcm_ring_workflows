@@ -123,7 +123,8 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE" \
-            env RELEASE_VERSION="${TAG#v}" bash -eu -o pipefail -c '
+            env SAMPLERATE_ADAPTER_DEB_DIR=/workspace/build/samplerate-adapter-debs \
+              RELEASE_VERSION="${TAG#v}" bash -eu -o pipefail -c '
               make clean
               make PACKAGE_VERSION="$RELEASE_VERSION" all \
                 build/rate_adjusting_pcm_ring.pc build/rate_adjusting_pcm_ring2.pc \
