@@ -115,9 +115,11 @@ jobs:
         run: |
           if [ "${{ matrix.arch }}" = amd64 ]; then
             RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE" \
+              env SAMPLERATE_ADAPTER_DEB_DIR=/workspace/build/samplerate-adapter-debs \
               make platform-verify
           else
             RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE" \
+              env SAMPLERATE_ADAPTER_DEB_DIR=/workspace/build/samplerate-adapter-debs \
               make all test install-check debian-package-check autopkgtest distcheck
           fi
       - uses: actions/upload-artifact@v7
