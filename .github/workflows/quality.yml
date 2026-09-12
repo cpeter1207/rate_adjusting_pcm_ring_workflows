@@ -1,4 +1,5 @@
 name: Required quality
+
 on:
   workflow_call:
     inputs:
@@ -7,60 +8,130 @@ on:
         type: string
         required: false
         default: ''
+      samplerate_adapter_repository:
+        description: Repository that publishes the required samplerate-adapter Debian packages.
+        type: string
+        required: false
+        default: cpeter1207/rptadv-samplerate-adapter
+      samplerate_adapter_tag:
+        description: Immutable samplerate-adapter release used by ABI major two.
+        type: string
+        required: false
+        default: v0.1.0-alpha.1
+
 permissions:
   contents: read
+
 jobs:
   independent:
     name: Platform-independent checks
     runs-on: ubuntu-24.04
-    container: ghcr.io/cpeter1207/rpt-advanced-quality-debian13:latest
     steps:
       - uses: actions/checkout@v7
         with:
           repository: cpeter1207/rate_adjusting_pcm_ring
           ref: ${{ inputs.code_ref || github.sha }}
+      - uses: actions/checkout@v7
+        with:
+          repository: cpeter1207/rate_adjusting_pcm_ring_workflows
+          ref: main
+          path: .workflow-support
+      - name: Download the released samplerate adapter packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          .workflow-support/scripts/fetch-samplerate-adapter-debs.sh
+          '${{ inputs.samplerate_adapter_repository }}'
+          '${{ inputs.samplerate_adapter_tag }}'
+          amd64
+          build/samplerate-adapter-debs
+      - name: Build the disposable Rust quality image
+        env:
+          QUALITY_IMAGE: rate-adjusting-pcm-ring-quality:${{ github.run_id }}-independent
+        run: |
+          docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
+          DOCKER_BUILDKIT=1 make SAMPLERATE_ADAPTER_DEB_DIR="$PWD/build/samplerate-adapter-debs" \
+            QUALITY_IMAGE="$QUALITY_IMAGE" quality-image
+          echo "QUALITY_IMAGE=$QUALITY_IMAGE" >> "$GITHUB_ENV"
       - name: Check formatting, analysis, and documentation concurrently
-        run: make -j3 quality
+        run: >
+          RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE"
+          make -j3 quality
       - uses: actions/upload-artifact@v7
         with:
           name: doxygen-html
           path: build/doxygen/html
           if-no-files-found: error
+      - name: Remove the disposable quality image
+        if: always()
+        env:
+          QUALITY_IMAGE: rate-adjusting-pcm-ring-quality:${{ github.run_id }}-independent
+        run: docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
+
   platforms:
     needs: independent
+    name: Debian 13 ${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
         include:
           - arch: amd64
             runner: ubuntu-24.04
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    container: ghcr.io/cpeter1207/rpt-advanced-quality-debian13:latest
     steps:
       - uses: actions/checkout@v7
         with:
           repository: cpeter1207/rate_adjusting_pcm_ring
           ref: ${{ inputs.code_ref || github.sha }}
-      - name: Verify target architecture
+      - uses: actions/checkout@v7
+        with:
+          repository: cpeter1207/rate_adjusting_pcm_ring_workflows
+          ref: main
+          path: .workflow-support
+      - name: Verify native target architecture
         env:
           EXPECTED_ARCH: ${{ matrix.arch }}
         run: test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
+      - name: Download the released samplerate adapter packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          .workflow-support/scripts/fetch-samplerate-adapter-debs.sh
+          '${{ inputs.samplerate_adapter_repository }}'
+          '${{ inputs.samplerate_adapter_tag }}'
+          '${{ matrix.arch }}'
+          build/samplerate-adapter-debs
+      - name: Build the disposable Rust quality image
+        env:
+          QUALITY_IMAGE: rate-adjusting-pcm-ring-quality:${{ github.run_id }}-${{ matrix.arch }}
+        run: |
+          docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
+          DOCKER_BUILDKIT=1 make SAMPLERATE_ADAPTER_DEB_DIR="$PWD/build/samplerate-adapter-debs" \
+            QUALITY_IMAGE="$QUALITY_IMAGE" quality-image
+          echo "QUALITY_IMAGE=$QUALITY_IMAGE" >> "$GITHUB_ENV"
       - name: Build, test, package, and stage installation
         run: |
           if [ "${{ matrix.arch }}" = amd64 ]; then
-            make platform-verify
+            RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE" \
+              make platform-verify
           else
-            make all test install-check distcheck
+            RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE" \
+              make all test install-check debian-package-check autopkgtest distcheck
           fi
       - uses: actions/upload-artifact@v7
-        if: always() && matrix.arch == 'amd64'
+        if: success() && matrix.arch == 'amd64'
         with:
           name: coverage-debian13-amd64
           path: build/coverage
           if-no-files-found: error
+      - name: Remove the disposable quality image
+        if: always()
+        env:
+          QUALITY_IMAGE: rate-adjusting-pcm-ring-quality:${{ github.run_id }}-${{ matrix.arch }}
+        run: docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
+
   required:
     name: Required quality gate
     if: always()
@@ -72,8 +143,10 @@ jobs:
           INDEPENDENT: ${{ needs.independent.result }}
           PLATFORMS: ${{ needs.platforms.result }}
         run: test "$INDEPENDENT" = success && test "$PLATFORMS" = success
+
   documentation:
-    if: github.ref == 'refs/heads/main' &&
+    if: >-
+      github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: required
     runs-on: ubuntu-24.04

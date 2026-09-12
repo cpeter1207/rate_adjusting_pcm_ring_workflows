@@ -1,118 +1,232 @@
 name: Verified shared-library release
+
 on:
   workflow_call:
     inputs:
       code_ref:
-        description: Immutable production revision to release.
+        description: Immutable merged production revision to release.
         type: string
         required: true
       tag:
         description: Release tag.
         type: string
         required: true
-      target_debian:
-        description: Target Debian version; Debian 12 requires explicit manual acknowledgement.
+      samplerate_adapter_repository:
+        description: Repository that publishes the required samplerate-adapter Debian packages.
         type: string
         required: false
-        default: '13'
-      manual_debian12:
-        description: Explicitly acknowledge a manually requested Debian 12 package build.
-        type: boolean
+        default: cpeter1207/rptadv-samplerate-adapter
+      samplerate_adapter_tag:
+        description: Immutable samplerate-adapter release used by ABI major two.
+        type: string
         required: false
-        default: false
+        default: v0.1.0-alpha.1
+
 permissions:
+  checks: read
   contents: write
-  pages: write
-  id-token: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
-  target:
-    name: Validate package target
+  source-revision:
+    name: Verify merged Debian 13 source revision
     runs-on: ubuntu-24.04
     steps:
-      - name: Accept Debian 13 or an explicitly acknowledged Debian 12 build
+      - uses: actions/checkout@v7
+        with:
+          repository: cpeter1207/rate_adjusting_pcm_ring
+          ref: main
+          fetch-depth: 0
+      - name: Require validated main revision, semantic tag, and matching Debian version
         env:
-          TARGET_DEBIAN: ${{ inputs.target_debian }}
-          MANUAL_DEBIAN12: ${{ inputs.manual_debian12 }}
+          CODE_REF: ${{ inputs.code_ref }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
         run: |
-          case "$TARGET_DEBIAN" in
-            13) ;;
-            12) test "$MANUAL_DEBIAN12" = true ;;
-            *) echo "Unsupported Debian target: $TARGET_DEBIAN" >&2; exit 1 ;;
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]
+          code_commit="$(git rev-parse "$CODE_REF^{commit}")"
+          git merge-base --is-ancestor "$code_commit" origin/main
+
+          quality_run="$(gh api --paginate \
+            "repos/cpeter1207/rate_adjusting_pcm_ring/commits/$code_commit/check-runs?per_page=100" \
+            --jq '.check_runs[] | select((.name == "Required quality gate" or .name == "quality / Required quality gate") and .conclusion == "success") | .id' \
+            | head -n 1)"
+          test -n "$quality_run"
+
+          release_version="${TAG#v}"
+          case "$release_version" in
+            *-*)
+              release_base="${release_version%%-*}"
+              release_prerelease="${release_version#*-}"
+              normalized_upstream="${release_base}~${release_prerelease//./}"
+              ;;
+            *) normalized_upstream="$release_version" ;;
           esac
-  quality:
-    needs: target
-    uses: cpeter1207/rate_adjusting_pcm_ring_workflows/.github/workflows/quality.yml@main
-    with:
-      code_ref: ${{ inputs.code_ref }}
+
+          changelog="$(mktemp)"
+          trap 'rm -f "$changelog"' EXIT
+          git show "$code_commit:debian/changelog" > "$changelog"
+          debian_version="$(dpkg-parsechangelog -l"$changelog" -S Version)"
+          debian_without_epoch="${debian_version#*:}"
+          debian_upstream="${debian_without_epoch%-*}"
+          test "$normalized_upstream" = "$debian_upstream"
+
   binaries:
-    needs: [quality, target]
+    needs: source-revision
+    name: Debian 13 ${{ matrix.arch }} artifacts
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
         include:
           - arch: amd64
             runner: ubuntu-24.04
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    container: ghcr.io/cpeter1207/rpt-advanced-quality-debian${{ inputs.target_debian }}:latest
     steps:
       - uses: actions/checkout@v7
         with:
           repository: cpeter1207/rate_adjusting_pcm_ring
           ref: ${{ inputs.code_ref }}
-      - name: Assemble shared-library archive
+      - uses: actions/checkout@v7
+        with:
+          repository: cpeter1207/rate_adjusting_pcm_ring_workflows
+          ref: main
+          path: .workflow-support
+      - name: Verify native target architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
+      - name: Download the released samplerate adapter packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          .workflow-support/scripts/fetch-samplerate-adapter-debs.sh
+          '${{ inputs.samplerate_adapter_repository }}'
+          '${{ inputs.samplerate_adapter_tag }}'
+          '${{ matrix.arch }}'
+          build/samplerate-adapter-debs
+      - name: Build the disposable Rust quality image
+        env:
+          QUALITY_IMAGE: rate-adjusting-pcm-ring-quality:${{ github.run_id }}-release-${{ matrix.arch }}
         run: |
-          version=${{ inputs.tag }}
-          version=${version#v}
-          soversion=${version%%.*}
-          make clean VERSION="$version" all build/rate_adjusting_pcm_ring.pc
-          mkdir release
-          cp "build/librate_adjusting_pcm_ring.so.$version" release/
-          ln -s "librate_adjusting_pcm_ring.so.$version" "release/librate_adjusting_pcm_ring.so.$soversion"
-          ln -s "librate_adjusting_pcm_ring.so.$soversion" release/librate_adjusting_pcm_ring.so
-          cp include/rate_adjusting_pcm_ring.h release/
-          cp build/rate_adjusting_pcm_ring.pc release/
-          tar -C release -czf rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ inputs.target_debian }}-${{ matrix.arch }}.tar.gz .
-      - name: Build and stage Debian packages
+          docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
+          DOCKER_BUILDKIT=1 make SAMPLERATE_ADAPTER_DEB_DIR="$PWD/build/samplerate-adapter-debs" \
+            QUALITY_IMAGE="$QUALITY_IMAGE" quality-image
+          echo "QUALITY_IMAGE=$QUALITY_IMAGE" >> "$GITHUB_ENV"
+      - name: Build the co-installable shared objects and Debian packages
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
-          make debian-package-check
-          debian_version=$(dpkg-parsechangelog -S Version)
-          debian_arch=$(dpkg --print-architecture)
-          cp "../librate-adjusting-pcm-ring1_${debian_version}_${debian_arch}.deb" \
-            "release/librate-adjusting-pcm-ring1_${debian_version}_debian${{ inputs.target_debian }}_${debian_arch}.deb"
-          cp "../librate-adjusting-pcm-ring-dev_${debian_version}_${debian_arch}.deb" \
-            "release/librate-adjusting-pcm-ring-dev_${debian_version}_debian${{ inputs.target_debian }}_${debian_arch}.deb"
+          RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE" \
+            env RELEASE_VERSION="${TAG#v}" bash -eu -o pipefail -c '
+              make clean
+              make PACKAGE_VERSION="$RELEASE_VERSION" all \
+                build/rate_adjusting_pcm_ring.pc build/rate_adjusting_pcm_ring2.pc \
+                debian-package-check
+
+              abi1_library="$(find build -maxdepth 1 -type f \
+                -name "librate_adjusting_pcm_ring.so.1.*" -printf "%f\\n")"
+              test "$(printf "%s\\n" "$abi1_library" | wc -l)" -eq 1
+              abi2_library="librate_adjusting_pcm_ring2.so.2.$RELEASE_VERSION"
+              test -f "build/$abi2_library"
+
+              mkdir -p release/abi1 release/abi2
+              cp "build/$abi1_library" release/abi1/
+              ln -s "$abi1_library" release/abi1/librate_adjusting_pcm_ring.so.1
+              ln -s librate_adjusting_pcm_ring.so.1 \
+                release/abi1/librate_adjusting_pcm_ring.so
+              cp include/rate_adjusting_pcm_ring.h release/abi1/
+              cp build/rate_adjusting_pcm_ring.pc release/abi1/
+
+              cp "build/$abi2_library" release/abi2/
+              ln -s "$abi2_library" release/abi2/librate_adjusting_pcm_ring2.so.2
+              ln -s librate_adjusting_pcm_ring2.so.2 \
+                release/abi2/librate_adjusting_pcm_ring2.so
+              cp include/rate_adjusting_pcm_ring2/rate_adjusting_pcm_ring2.h release/abi2/
+              cp build/rate_adjusting_pcm_ring2.pc release/abi2/
+
+              tar -C release -czf "rate-adjusting-pcm-ring-$TAG-debian13-$(dpkg --print-architecture).tar.gz" \
+                abi1 abi2
+
+              debian_version="$(dpkg-parsechangelog -S Version)"
+              debian_arch="$(dpkg --print-architecture)"
+              cp "build/debian-source/librate-adjusting-pcm-ring1_${debian_version}_${debian_arch}.deb" release/
+              cp "build/debian-source/librate-adjusting-pcm-ring-dev_${debian_version}_${debian_arch}.deb" release/
+              cp "build/debian-source/librate-adjusting-pcm-ring2_${debian_version}_${debian_arch}.deb" release/
+              cp "build/debian-source/librate-adjusting-pcm-ring2-dev_${debian_version}_${debian_arch}.deb" release/
+            '
       - uses: actions/upload-artifact@v7
         with:
-          name: shared-library-debian${{ inputs.target_debian }}-${{ matrix.arch }}
-          path: rate_adjusting_pcm_ring-${{ inputs.tag }}-debian${{ inputs.target_debian }}-${{ matrix.arch }}.tar.gz
+          name: shared-library-debian13-${{ matrix.arch }}
+          path: rate-adjusting-pcm-ring-${{ inputs.tag }}-debian13-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         with:
-          name: debian-packages-debian${{ inputs.target_debian }}-${{ matrix.arch }}
+          name: debian-packages-debian13-${{ matrix.arch }}
           path: release/*.deb
           if-no-files-found: error
+      - name: Remove the disposable quality image
+        if: always()
+        env:
+          QUALITY_IMAGE: rate-adjusting-pcm-ring-quality:${{ github.run_id }}-release-${{ matrix.arch }}
+        run: docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
+
   source:
-    needs: [quality, target]
+    needs: source-revision
+    name: Source archive
     runs-on: ubuntu-24.04
-    container: ghcr.io/cpeter1207/rpt-advanced-quality-debian13:latest
     steps:
       - uses: actions/checkout@v7
         with:
           repository: cpeter1207/rate_adjusting_pcm_ring
           ref: ${{ inputs.code_ref }}
-      - run: |
-          version=${{ inputs.tag }}
-          make VERSION="${version#v}" distcheck
+      - uses: actions/checkout@v7
+        with:
+          repository: cpeter1207/rate_adjusting_pcm_ring_workflows
+          ref: main
+          path: .workflow-support
+      - name: Download the released samplerate adapter packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          .workflow-support/scripts/fetch-samplerate-adapter-debs.sh
+          '${{ inputs.samplerate_adapter_repository }}'
+          '${{ inputs.samplerate_adapter_tag }}'
+          amd64
+          build/samplerate-adapter-debs
+      - name: Build the disposable Rust quality image
+        env:
+          QUALITY_IMAGE: rate-adjusting-pcm-ring-quality:${{ github.run_id }}-release-source
+        run: |
+          docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
+          DOCKER_BUILDKIT=1 make SAMPLERATE_ADAPTER_DEB_DIR="$PWD/build/samplerate-adapter-debs" \
+            QUALITY_IMAGE="$QUALITY_IMAGE" quality-image
+          echo "QUALITY_IMAGE=$QUALITY_IMAGE" >> "$GITHUB_ENV"
+      - name: Build and validate the release source archive
+        env:
+          TAG: ${{ inputs.tag }}
+        run: >
+          RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE"
+          env PACKAGE_VERSION="${TAG#v}" make distcheck
       - uses: actions/upload-artifact@v7
         with:
           name: source-archive
-          path: build/rate_adjusting_pcm_ring-*.tar.gz
+          path: build/rate-adjusting-pcm-ring-*.tar.gz
           if-no-files-found: error
+      - name: Remove the disposable quality image
+        if: always()
+        env:
+          QUALITY_IMAGE: rate-adjusting-pcm-ring-quality:${{ github.run_id }}-release-source
+        run: docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
+
   publish:
     needs: [binaries, source]
+    name: Publish GitHub release
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -133,8 +247,14 @@ jobs:
         with:
           name: source-archive
           path: release
-      - name: Publish GitHub release
+      - name: Publish release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
-        run: gh release create "$TAG" release/*.tar.gz release/*.deb --generate-notes --title "$TAG"
+        run: |
+          prerelease=()
+          case "$TAG" in
+            *-*) prerelease=(--prerelease) ;;
+          esac
+          gh release create "$TAG" release/*.tar.gz release/*.deb \
+            --generate-notes --title "$TAG" "${prerelease[@]}"
