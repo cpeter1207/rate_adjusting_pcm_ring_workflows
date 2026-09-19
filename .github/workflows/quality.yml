@@ -3,6 +3,11 @@ name: Required quality
 on:
   workflow_call:
     inputs:
+      fast_only:
+        description: Run only formatting, lint, and static analysis for a push.
+        type: boolean
+        required: false
+        default: false
       code_ref:
         description: Exact production revision to validate; empty uses the caller revision.
         type: string
@@ -54,10 +59,18 @@ jobs:
             QUALITY_IMAGE="$QUALITY_IMAGE" quality-image
           echo "QUALITY_IMAGE=$QUALITY_IMAGE" >> "$GITHUB_ENV"
       - name: Check formatting, analysis, and documentation concurrently
-        run: >
-          RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE"
-          make -j3 quality
+        env:
+          FAST_ONLY: ${{ inputs.fast_only }}
+        run: |
+          if [ "$FAST_ONLY" = true ]; then
+            RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE" \
+              make -j2 lint static-analysis
+          else
+            RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE" \
+              make -j3 quality
+          fi
       - uses: actions/upload-artifact@v7
+        if: ${{ !inputs.fast_only }}
         with:
           name: doxygen-html
           path: build/doxygen/html
@@ -69,6 +82,7 @@ jobs:
         run: docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
 
   platforms:
+    if: ${{ !inputs.fast_only }}
     needs: independent
     name: Debian 13 ${{ matrix.arch }}
     strategy:
@@ -138,7 +152,7 @@ jobs:
 
   required:
     name: Required quality gate
-    if: always()
+    if: ${{ always() && !inputs.fast_only }}
     needs: [independent, platforms]
     runs-on: ubuntu-24.04
     steps:
@@ -150,6 +164,7 @@ jobs:
 
   documentation:
     if: >-
+      !inputs.fast_only &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: required
