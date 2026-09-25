@@ -1,0 +1,77 @@
+name: Publish documentation
+on:
+  workflow_call:
+    inputs:
+      code_ref:
+        description: Immutable production revision whose API documentation is published.
+        type: string
+        required: true
+      samplerate_adapter_repository:
+        description: Repository that publishes the released samplerate-adapter Debian packages.
+        type: string
+        required: false
+        default: cpeter1207/rptadv-samplerate-adapter
+      samplerate_adapter_tag:
+        description: Immutable released samplerate-adapter tag used by the Rust ABI-major-2 build.
+        type: string
+        required: false
+        default: v0.1.0-alpha.1
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+jobs:
+  documentation:
+    name: Build and publish API documentation
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.publish.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: cpeter1207/rate_adjusting_pcm_ring
+          ref: ${{ inputs.code_ref }}
+      - name: Check out workflow support
+        uses: actions/checkout@v7
+        with:
+          repository: cpeter1207/rate_adjusting_pcm_ring_workflows
+          ref: main
+          path: .workflow-support
+      - name: Download the released samplerate adapter packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          .workflow-support/scripts/fetch-samplerate-adapter-debs.sh
+          '${{ inputs.samplerate_adapter_repository }}'
+          '${{ inputs.samplerate_adapter_tag }}'
+          amd64
+          build/samplerate-adapter-debs
+      - name: Build the disposable Rust quality image
+        env:
+          QUALITY_IMAGE: rate-adjusting-pcm-ring-quality:${{ github.run_id }}-documentation
+        run: |
+          docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
+          DOCKER_BUILDKIT=1 make SAMPLERATE_ADAPTER_DEB_DIR="$PWD/build/samplerate-adapter-debs" \
+            QUALITY_IMAGE="$QUALITY_IMAGE" quality-image
+          echo "QUALITY_IMAGE=$QUALITY_IMAGE" >> "$GITHUB_ENV"
+      - name: Build warning-free API documentation
+        run: >
+          RPTADV_CONTAINER_PULL=0 sh tools/run-in-quality-container.sh "$QUALITY_IMAGE"
+          make docs
+      - uses: actions/configure-pages@v6
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: build/doxygen/html
+      - uses: actions/deploy-pages@v5
+        id: publish
+      - name: Remove the disposable quality image
+        if: always()
+        env:
+          QUALITY_IMAGE: rate-adjusting-pcm-ring-quality:${{ github.run_id }}-documentation
+        run: docker image rm --force "$QUALITY_IMAGE" 2>/dev/null || true
