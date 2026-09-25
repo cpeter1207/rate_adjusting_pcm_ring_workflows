@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch the exact native Debian adapter packages required by ring ABI major 2.
+# Fetch the exact native Debian adapter packages required by ring ABI major 3.
 set -euo pipefail
 
 if [[ $# -ne 4 ]]; then

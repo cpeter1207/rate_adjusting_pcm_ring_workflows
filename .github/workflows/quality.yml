@@ -19,10 +19,10 @@ on:
         required: false
         default: cpeter1207/rptadv-samplerate-adapter
       samplerate_adapter_tag:
-        description: Immutable samplerate-adapter release used by ABI major two.
+        description: Immutable samplerate-adapter release used by ABI major three.
         type: string
         required: false
-        default: v0.1.0-alpha.1
+        default: v0.1.0-alpha.3
 
 permissions:
   contents: read

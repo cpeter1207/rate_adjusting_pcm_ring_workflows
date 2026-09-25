@@ -11,3 +11,5 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: raven-actions/actionlint@v2
+      - name: Check the release artifact contract
+        run: python3 -m unittest discover -s tests -v

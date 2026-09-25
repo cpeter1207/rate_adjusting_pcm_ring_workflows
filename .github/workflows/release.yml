@@ -17,7 +17,7 @@ on:
         required: false
         default: cpeter1207/rptadv-samplerate-adapter
       samplerate_adapter_tag:
-        description: Immutable samplerate-adapter release used by ABI major two.
+        description: Immutable samplerate-adapter release used by ABI major three.
         type: string
         required: false
         default: v0.1.0-alpha.3
@@ -133,7 +133,7 @@ jobs:
           DOCKER_BUILDKIT=1 make SAMPLERATE_ADAPTER_DEB_DIR="$PWD/build/samplerate-adapter-debs" \
             QUALITY_IMAGE="$QUALITY_IMAGE" quality-image
           echo "QUALITY_IMAGE=$QUALITY_IMAGE" >> "$GITHUB_ENV"
-      - name: Build the ABI-major-2 shared object and Debian packages
+      - name: Build the ABI-major-3 shared object and Debian packages
         env:
           TAG: ${{ inputs.tag }}
         run: |
@@ -141,27 +141,27 @@ jobs:
             env SAMPLERATE_ADAPTER_DEB_DIR=/workspace/build/samplerate-adapter-debs \
               RELEASE_TAG="$TAG" RELEASE_VERSION="${TAG#v}" bash -eu -o pipefail -c '
               make PACKAGE_VERSION="$RELEASE_VERSION" all \
-                build/rate_adjusting_pcm_ring2.pc \
+                build/rate_adjusting_pcm_ring3.pc \
                 debian-package-check
 
-              abi2_library="librate_adjusting_pcm_ring2.so.2.$RELEASE_VERSION"
-              test -f "build/$abi2_library"
+              abi3_library="librate_adjusting_pcm_ring3.so.3.$RELEASE_VERSION"
+              test -f "build/$abi3_library"
 
-              mkdir -p release/abi2
-              cp "build/$abi2_library" release/abi2/
-              ln -s "$abi2_library" release/abi2/librate_adjusting_pcm_ring2.so.2
-              ln -s librate_adjusting_pcm_ring2.so.2 \
-                release/abi2/librate_adjusting_pcm_ring2.so
-              cp include/rate_adjusting_pcm_ring2/rate_adjusting_pcm_ring2.h release/abi2/
-              cp build/rate_adjusting_pcm_ring2.pc release/abi2/
+              mkdir -p release/abi3
+              cp "build/$abi3_library" release/abi3/
+              ln -s "$abi3_library" release/abi3/librate_adjusting_pcm_ring3.so.3
+              ln -s librate_adjusting_pcm_ring3.so.3 \
+                release/abi3/librate_adjusting_pcm_ring3.so
+              cp include/rate_adjusting_pcm_ring3/rate_adjusting_pcm_ring3.h release/abi3/
+              cp build/rate_adjusting_pcm_ring3.pc release/abi3/
 
               tar -C release -czf "rate-adjusting-pcm-ring-$RELEASE_TAG-debian13-$(dpkg --print-architecture).tar.gz" \
-                abi2
+                abi3
 
               debian_version="$(dpkg-parsechangelog -S Version)"
               debian_arch="$(dpkg --print-architecture)"
-              cp "build/debian-source/librate-adjusting-pcm-ring2_${debian_version}_${debian_arch}.deb" release/
-              cp "build/debian-source/librate-adjusting-pcm-ring2-dev_${debian_version}_${debian_arch}.deb" release/
+              cp "build/debian-source/librate-adjusting-pcm-ring3_${debian_version}_${debian_arch}.deb" release/
+              cp "build/debian-source/librate-adjusting-pcm-ring3-dev_${debian_version}_${debian_arch}.deb" release/
             '
       - uses: actions/upload-artifact@v7
         with:
