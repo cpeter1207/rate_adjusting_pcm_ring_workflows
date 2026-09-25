@@ -20,7 +20,10 @@ on:
         description: Immutable samplerate-adapter release used by ABI major two.
         type: string
         required: false
-        default: v0.1.0-alpha.1
+        default: v0.1.0-alpha.3
+    secrets:
+      APT_INDEX_DISPATCH_TOKEN:
+        required: true
 
 permissions:
   checks: read
@@ -258,3 +261,17 @@ jobs:
           esac
           gh release create "$TAG" release/*.tar.gz release/*.deb \
             --generate-notes --title "$TAG" "${prerelease[@]}"
+
+  notify-package-index:
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Notify USBRadioPlus after release publication
+        uses: cpeter1207/USBRadioPlus-Workflows/actions/dispatch-package-index@main
+        with:
+          package-repository: cpeter1207/rate_adjusting_pcm_ring
+          package-tag: ${{ inputs.tag }}
+          samplerate-adapter-tag: ${{ inputs.samplerate_adapter_tag }}
+          token: ${{ secrets.APT_INDEX_DISPATCH_TOKEN }}

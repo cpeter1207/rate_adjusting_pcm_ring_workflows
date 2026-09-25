@@ -20,3 +20,7 @@ revision and the latest successful required quality check on its merged
 pull request's head. It fetches the released sample-rate adapter packages and
 publishes the canonical-F32 ABI-major-two library, source archive, and Debian
 13 amd64/arm64 packages without rerunning the quality gate.
+
+After publication, the workflow refreshes the USBRadioPlus APT index. The
+source repository must provide an `APT_INDEX_DISPATCH_TOKEN` fine-grained PAT
+with `Contents: write` access only to `cpeter1207/USBRadioPlus`.
