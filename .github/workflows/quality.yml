@@ -19,7 +19,7 @@ on:
         required: false
         default: cpeter1207/rptadv-samplerate-adapter
       samplerate_adapter_tag:
-        description: Immutable samplerate-adapter release used by ABI major two.
+        description: Immutable samplerate-adapter release, unless the source pins a candidate ABI.
         type: string
         required: false
         default: v0.1.0-alpha.1
@@ -41,7 +41,13 @@ jobs:
           repository: cpeter1207/rate_adjusting_pcm_ring_workflows
           ref: main
           path: .workflow-support
+      - name: Build explicitly pinned candidate adapter
+        uses: cpeter1207/rptadv-shared-library-workflows/actions/install-candidate-dependencies@main
+        with:
+          package-directory: build/samplerate-adapter-debs
+          install: 'false'
       - name: Download the released samplerate adapter packages
+        if: hashFiles('.github/dependencies.json') == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
@@ -108,7 +114,13 @@ jobs:
         env:
           EXPECTED_ARCH: ${{ matrix.arch }}
         run: test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
+      - name: Build explicitly pinned candidate adapter
+        uses: cpeter1207/rptadv-shared-library-workflows/actions/install-candidate-dependencies@main
+        with:
+          package-directory: build/samplerate-adapter-debs
+          install: 'false'
       - name: Download the released samplerate adapter packages
+        if: hashFiles('.github/dependencies.json') == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
