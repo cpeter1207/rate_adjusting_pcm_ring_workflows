@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch the exact native Debian adapter packages required by ring ABI major 2.
+# Fetch one native runtime adapter ABI and the development package for a release.
 set -euo pipefail
 
 if [[ $# -ne 4 ]]; then
@@ -24,10 +24,10 @@ rm -rf "$destination"
 mkdir -p "$destination"
 
 gh release download "$tag" --repo "$repository" --dir "$destination" \
-    --pattern "librptadv-samplerate-adapter1_*_${architecture}.deb" \
+    --pattern "librptadv-samplerate-adapter[0-9]_*_${architecture}.deb" \
     --pattern "librptadv-samplerate-adapter-dev_*_${architecture}.deb"
 
-runtime=("$destination"/librptadv-samplerate-adapter1_*_"$architecture".deb)
+runtime=("$destination"/librptadv-samplerate-adapter[0-9]_*_"$architecture".deb)
 development=("$destination"/librptadv-samplerate-adapter-dev_*_"$architecture".deb)
 
 if [[ ${#runtime[@]} -ne 1 || ! -f ${runtime[0]} ]]; then
